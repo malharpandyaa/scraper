@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LinkedIn Post Extractor</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            text-align: center;
+            color: #0077b5;
+        }
+        .container {
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="text"],
+        input[type="password"],
+        input[type="email"] {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 15px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #0077b5;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            width: 100%;
+        }
+        button:hover {
+            background-color: #006097;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+            display: none;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .loading {
+            text-align: center;
+            margin-top: 20px;
+            display: none;
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #0077b5;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 2s linear infinite;
+            margin: 0 auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <h1>LinkedIn Post Extractor</h1>
+    <div class="container">
+        <form id="extractorForm">
+            <div>
+                <label for="linkedinEmail">LinkedIn Email:</label>
+                <input type="email" id="linkedinEmail" name="linkedinEmail" required>
+            </div>
+            
+            <div>
+                <label for="linkedinPassword">LinkedIn Password:</label>
+                <input type="password" id="linkedinPassword" name="linkedinPassword" required>
+            </div>
+            
+            <button type="submit">Extract My Posts</button>
+        </form>
+        
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Processing your request. This may take a few minutes...</p>
+        </div>
+        
+        <div class="status" id="status"></div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script>
+        // Hardcoded Phantombuster API key - replace this with your actual API key
+        const PHANTOMBUSTER_API_KEY = "YOUR_PHANTOMBUSTER_API_KEY_HERE";
+        const PHANTOM_ID = "YOUR_LINKEDIN_SCRAPER_PHANTOM_ID";
+        
+        document.getElementById('extractorForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const linkedinEmail = document.getElementById('linkedinEmail').value;
+            const linkedinPassword = document.getElementById('linkedinPassword').value;
+            
+            const loading = document.getElementById('loading');
+            const status = document.getElementById('status');
+            
+            loading.style.display = 'block';
+            status.style.display = 'none';
+            
+            try {
+                // Step 1: Launch the Phantombuster LinkedIn Profile Scraper API
+                const launchResponse = await fetch('https://api.phantombuster.com/api/v2/phantoms/launch', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Phantombuster-Key': PHANTOMBUSTER_API_KEY
+                    },
+                    body: JSON.stringify({
+                        id: PHANTOM_ID,
+                        argument: {
+                            sessionCookie: "", // This would need proper LinkedIn authentication
+                            email: linkedinEmail,
+                            password: linkedinPassword,
+                            extractPosts: true
+                        }
+                    })
+                });
+                
+                if (!launchResponse.ok) {
+                    throw new Error('Failed to launch Phantombuster API');
+                }
+                
+                const launchData = await launchResponse.json();
+                const containerId = launchData.containerId;
+                
+                // Step 2: Poll for completion
+                let isComplete = false;
+                let attempts = 0;
+                let postsData;
+                
+                while (!isComplete && attempts < 30) {
+                    await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds between checks
+                    
+                    const statusResponse = await fetch(`https://api.phantombuster.com/api/v2/phantoms/fetch-output?id=${PHANTOM_ID}&containerId=${containerId}`, {
+                        headers: {
+                            'X-Phantombuster-Key': PHANTOMBUSTER_API_KEY
+                        }
+                    });
+                    
+                    if (statusResponse.ok) {
+                        const statusData = await statusResponse.json();
+                        if (statusData.status === 'finished') {
+                            isComplete = true;
+                            postsData = statusData.output;
+                        }
+                    }
+                    
+                    attempts++;
+                }
+                
+                if (!isComplete) {
+                    throw new Error('The operation timed out. Please try again later.');
+                }
+                
+                // Step 3: Generate PDF from the posts data
+                const { jsPDF } = window.jspdf;
+                const doc = new jsPDF();
+                
+                let yPosition = 20;
+                
+                // Add title
+                doc.setFontSize(16);
+                doc.text('Your LinkedIn Posts', 105, yPosition, null, null, 'center');
+                yPosition += 15;
+                
+                // Reset font size for content
+                doc.setFontSize(12);
+                
+                // Process posts
+                if (postsData && postsData.length > 0) {
+                    postsData.forEach((post, index) => {
+                        // Add some spacing between posts
+                        if (index > 0) yPosition += 10;
+                        
+                        // Check if we need a new page
+                        if (yPosition > 270) {
+                            doc.addPage();
+                            yPosition = 20;
+                        }
+                        
+                        // Add post date
+                        doc.setFont(undefined, 'bold');
+                        doc.text(`Post Date: ${new Date(post.date).toLocaleDateString()}`, 20, yPosition);
+                        yPosition += 8;
+                        
+                        // Add post content
+                        doc.setFont(undefined, 'normal');
+                        const splitText = doc.splitTextToSize(post.content, 170);
+                        
+                        // Check if content will overflow page and add new page if needed
+                        if (yPosition + splitText.length * 7 > 280) {
+                            doc.addPage();
+                            yPosition = 20;
+                        }
+                        
+                        doc.text(splitText, 20, yPosition);
+                        yPosition += splitText.length * 7 + 10;
+                        
+                        // Add engagement metrics
+                        doc.text(`Likes: ${post.likes || 0} | Comments: ${post.comments || 0} | Shares: ${post.shares || 0}`, 20, yPosition);
+                        yPosition += 15;
+                    });
+                } else {
+                    doc.text('No posts found.', 20, yPosition);
+                }
+                
+                // Save the PDF
+                doc.save('linkedin_posts.pdf');
+                
+                // Show success message
+                loading.style.display = 'none';
+                status.className = 'status success';
+                status.textContent = 'Your LinkedIn posts have been extracted and downloaded as a PDF.';
+                status.style.display = 'block';
+                
+            } catch (error) {
+                console.error('Error:', error);
+                loading.style.display = 'none';
+                status.className = 'status error';
+                status.textContent = `Error: ${error.message || 'Something went wrong. Please try again.'}`;
+                status.style.display = 'block';
+            }
+        });
+    </script>
+</body>
+</html>
